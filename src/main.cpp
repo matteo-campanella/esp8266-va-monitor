@@ -7,8 +7,8 @@
 #define SENSOR_NAME "camera1_battery"
 #define OFF_VOLTAGE 14.4
 #define ON_VOLTAGE 15.2
-#define SWITCH_PIN 14
 #define SLEEP_TIME 300e6
+#define PIC_PIN 12
 
 bool isTimeValid = false;
 Adafruit_INA219 ina219;
@@ -109,11 +109,11 @@ void send_sensor_data() {
 
 void switchOnOff(bool isSwitchOn) {
     if (isSwitchOn) {
-        digitalWrite(SWITCH_PIN,HIGH);
-        log_println("Swtiching Load ON");
+        tone(PIC_PIN,500);
+        log_println("Switching Load ON");
     }
     else {
-        digitalWrite(SWITCH_PIN,LOW);
+        tone(PIC_PIN,1000);
         log_println("Switching Load OFF");
     }
 }
@@ -123,16 +123,8 @@ void manage_safety_switch() {
     if (voltage>ON_VOLTAGE) switchOnOff(true);
 }
 
-void pin_setup() {
-    pinMode(LED_BUILTIN, OUTPUT);
-    led_off();
-    pinMode(SWITCH_PIN,OUTPUT);
-    digitalWrite(SWITCH_PIN,LOW);
-}
-
 void setup() {
     ota_setup();
-    pin_setup();
     led_off();
     connect_wifi();
     ina219_setup();
@@ -145,5 +137,7 @@ void setup() {
 }
 
 void loop() {
-
+    // send_sensor_data();
+    // manage_safety_switch();
+    // delay(2000);
 }
