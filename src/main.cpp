@@ -16,6 +16,10 @@ bool isTimeValid = false;
 Adafruit_INA219 ina219;
 float voltage,current;
 
+#define MQTT_SERVER "81981a2bf6a64f8e8c093fe623897e5c.s2.eu.hivemq.cloud"
+#define MQTT_PORT 8883
+#define MQTT_TOPIC "gmsiziano"
+
 // InfluxDB v2 server url (Use: InfluxDB UI -> Load Data -> Client Libraries)
 #define INFLUXDB_URL "https://eu-central-1-1.aws.cloud2.influxdata.com"
 
