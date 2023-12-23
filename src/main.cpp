@@ -4,15 +4,15 @@
 #define led_on() digitalWrite(LED_BUILTIN, LOW);
 #define led_off() digitalWrite(LED_BUILTIN, HIGH);
 
-#define SITE_NAME "gmssiziano"
+#define SITE_NAME "gmsiziano"
 #define DEVICE_NAME "camera1"
 #define SENSOR_NAME DEVICE_NAME"_battery"
 #define OFF_VOLTAGE 14.4
 #define ON_VOLTAGE 16.4
 #define SLEEP_TIME 300e6
 #define PIC_PIN 12
+#define LOOP_DELAY 500
 
-bool isTimeValid = false;
 Adafruit_INA219 ina219;
 float voltage,current;
 
@@ -32,8 +32,10 @@ Point sensor(SENSOR_NAME);
 WiFiClientSecure secureClient;
 PubSubClient mqttClient(secureClient);
 DynamicJsonDocument doc(1024);
-
-
+uint8_t hoursOFF[24];
+bool stayON=false;
+uint8_t stayONSeconds=0;
+unsigned int loopCounter=10;
 
 bool connect_wifi() {
     const char *found_ssid = NULL;
@@ -112,11 +114,9 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     doc.clear();
     DeserializationError error = deserializeJson(doc,buffer);
     if (error) return;
-    JsonArray hoursOFF = doc["hoursOFF"].as<JsonArray>();
-    for (int i = 0; i < hoursOFF.size() ; i++ ) {
-        log_println(hoursOFF[i][0]);
-        log_println(hoursOFF[i][1]);
-    }
+    JsonArray jsonHoursOFF = doc["hoursOFF"].as<JsonArray>();
+    for(uint8_t i=0;i<24;i++) hoursOFF[i]=false;
+    for(JsonVariant v : jsonHoursOFF) hoursOFF[v.as<uint8_t>()]=true;    
 }
 
 bool mqtt_connect() {
@@ -130,7 +130,7 @@ bool mqtt_connect() {
     return false;
 }
 
-void mqtt_send(char *topic, const char *key, const char *value) {
+void mqtt_send(char *topic, const char *key, const char *value, bool isRetained) {
     if (!mqttClient.connected()) return;
     char mqtt_message[128];
     doc.clear();
@@ -138,7 +138,7 @@ void mqtt_send(char *topic, const char *key, const char *value) {
     doc["siteId"]=SITE_NAME;
     doc[key]=value;
     serializeJson(doc, mqtt_message);
-    mqttClient.publish(topic, mqtt_message, true);
+    mqttClient.publish(topic, mqtt_message, isRetained);
 }
 
 void mqtt_off() {
@@ -176,24 +176,47 @@ void switchOnOff(bool isSwitchOn) {
     if (isSwitchOn) {
         tone(PIC_PIN,500);
         log_println("Switching Load ON");
-        mqtt_send(MQTT_TOPIC"/sta","status","ON");
     }
     else {
         tone(PIC_PIN,1000);
         log_println("Switching Load OFF");
-        mqtt_send(MQTT_TOPIC"/sta","status","OFF");
     }
+    mqtt_send(MQTT_TOPIC"/sta","status",isSwitchOn?"ON":"OFF",false);    
 }
 
-void manage_safety_switch() {
+uint8_t getHourOfDay() {
+    time_t t;
+    struct tm *tm_info;
+
+    time(&t);
+    tm_info = localtime(&t);
+    return tm_info->tm_hour;
+}
+
+bool manage_power_switch() {
+    if (stayON) {
+        log_printfln("Forcing ON for %u seconds",stayONSeconds);
+        switchOnOff(true);
+        loopCounter = stayONSeconds * (1000 / LOOP_DELAY);
+        stayON = false;
+        return false;
+    }
+    log_print(String(getHourOfDay()).c_str()); //remove
+    if (hoursOFF[getHourOfDay()]) {
+        log_println("This hour is OFF");
+        switchOnOff(false);
+        return true;
+    }
     if (voltage<OFF_VOLTAGE) switchOnOff(false);
     if (voltage>ON_VOLTAGE) switchOnOff(true);
+    return true;
 }
 
 void deep_sleep() {
     delay(1000);
     mqtt_off();
-    ESP.deepSleep(SLEEP_TIME,RF_NO_CAL);    
+    //ESP.deepSleep(SLEEP_TIME,RF_NO_CAL);
+    ESP.deepSleep(60e6,RF_NO_CAL);
 }
 
 void setup() {
@@ -205,13 +228,12 @@ void setup() {
     mqtt_setup();
     log_println("UP!");
     send_sensor_data();
-    manage_safety_switch();
 }
-
-unsigned int i=10;
 
 void loop() {
     mqttClient.loop();
-    delay(500);
-    if (i--==0) deep_sleep();
+    delay(LOOP_DELAY);
+    if (loopCounter--==0) {
+        if (manage_power_switch()) deep_sleep();
+    }
 }
