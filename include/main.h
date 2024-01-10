@@ -10,6 +10,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include <EEPROM.h>
 
 #include "ota.h"
 #include "logging.h"

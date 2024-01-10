@@ -26,6 +26,8 @@ float voltage,current;
 // Set timezone string according to <https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html>
 #define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3"
 
+#define EEPROM_SIZE 2
+
 // InfluxDB client instance with preconfigured InfluxCloud certificate
 InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 Point sensor(SENSOR_NAME);
@@ -36,12 +38,14 @@ uint8_t hoursOFF[24];
 bool stayON=false;
 uint8_t stayONSeconds=0;
 unsigned int loopCounter=10;
+bool isSwitchedOn = false;
+bool wasOn = false;
 
 bool connect_wifi() {
     const char *found_ssid = NULL;
     int n = 0;
 
-    timeSync(TZ_Etc_UTC, "pool.ntp.org", "time.nist.gov", "ntp1.inrim.it");
+    timeSync(TZ_Europe_Rome, "pool.ntp.org", "time.nist.gov", "ntp1.inrim.it");
 
     for (int i = 0; i < 3; i++) {
         n = WiFi.scanNetworks();
@@ -114,9 +118,15 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     doc.clear();
     DeserializationError error = deserializeJson(doc,buffer);
     if (error) return;
-    JsonArray jsonHoursOFF = doc["hoursOFF"].as<JsonArray>();
-    for(uint8_t i=0;i<24;i++) hoursOFF[i]=false;
-    for(JsonVariant v : jsonHoursOFF) hoursOFF[v.as<uint8_t>()]=true;    
+    if (doc.containsKey("hoursOFF")) {
+        JsonArray jsonHoursOFF = doc["hoursOFF"].as<JsonArray>();
+        for(uint8_t i=0;i<24;i++) hoursOFF[i]=false;
+        for(JsonVariant v : jsonHoursOFF) hoursOFF[v.as<uint8_t>()]=true;
+    }
+    if (doc.containsKey("stayON")) {
+        stayON = true;
+        stayONSeconds = doc["stayON"].as<uint16_t>();
+    }
 }
 
 bool mqtt_connect() {
@@ -176,10 +186,12 @@ void switchOnOff(bool isSwitchOn) {
     if (isSwitchOn) {
         tone(PIC_PIN,500);
         log_println("Switching Load ON");
+        isSwitchedOn = true;
     }
     else {
         tone(PIC_PIN,1000);
         log_println("Switching Load OFF");
+        isSwitchedOn = false;
     }
     mqtt_send(MQTT_TOPIC"/sta","status",isSwitchOn?"ON":"OFF",false);    
 }
@@ -201,26 +213,46 @@ bool manage_power_switch() {
         stayON = false;
         return false;
     }
-    log_print(String(getHourOfDay()).c_str()); //remove
-    if (hoursOFF[getHourOfDay()]) {
-        log_println("This hour is OFF");
+    uint8_t h = getHourOfDay();
+    log_printfln("Hour Of Day: %d -> %s",h,hoursOFF[h]?"OFF":"ON"); //remove
+    if (hoursOFF[h] && isSwitchedOn) {
         switchOnOff(false);
+        wasOn = true;
         return true;
+    }
+    if (!hoursOFF[h] && wasOn) {
+        switchOnOff(true);
+        wasOn = false;
     }
     if (voltage<OFF_VOLTAGE) switchOnOff(false);
     if (voltage>ON_VOLTAGE) switchOnOff(true);
     return true;
 }
 
+void eeprom_setup() {
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.get(0,wasOn);
+    EEPROM.get(1,isSwitchedOn);
+}
+
+void eeprom_off() {
+    EEPROM.put(0,wasOn);
+    EEPROM.put(1,isSwitchedOn);
+    EEPROM.commit();
+    EEPROM.end();
+}
+
 void deep_sleep() {
     delay(1000);
     mqtt_off();
-    //ESP.deepSleep(SLEEP_TIME,RF_NO_CAL);
-    ESP.deepSleep(60e6,RF_NO_CAL);
+    eeprom_off();
+    ESP.deepSleep(SLEEP_TIME,RF_NO_CAL);
+    //ESP.deepSleep(60e6,RF_NO_CAL);
 }
 
 void setup() {
     ota_setup();
+    eeprom_setup();
     led_off();
     connect_wifi();
     ina219_setup();
