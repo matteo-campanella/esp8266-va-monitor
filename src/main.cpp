@@ -4,7 +4,7 @@
 #define led_on() digitalWrite(LED_BUILTIN, LOW);
 #define led_off() digitalWrite(LED_BUILTIN, HIGH);
 
-#define SITE_NAME "gmsiziano"
+#define SITE_NAME "lab"
 #define DEVICE_NAME "camera1"
 #define SENSOR_NAME DEVICE_NAME"_battery"
 #define OFF_VOLTAGE 14.4
@@ -18,7 +18,9 @@ float voltage,current;
 
 #define MQTT_SERVER "81981a2bf6a64f8e8c093fe623897e5c.s2.eu.hivemq.cloud"
 #define MQTT_PORT 8883
-#define MQTT_TOPIC "gmsiziano"
+#define MQTT_TOPIC SITE_NAME
+#define MQTT_COMMAND_TOPIC MQTT_TOPIC"/"DEVICE_NAME"/cmd"
+#define MQTT_STATUS_TOPIC MQTT_TOPIC"/"DEVICE_NAME"/sta"
 
 // InfluxDB v2 server url (Use: InfluxDB UI -> Load Data -> Client Libraries)
 #define INFLUXDB_URL "https://eu-central-1-1.aws.cloud2.influxdata.com"
@@ -35,11 +37,13 @@ WiFiClientSecure secureClient;
 PubSubClient mqttClient(secureClient);
 DynamicJsonDocument doc(1024);
 uint8_t hoursOFF[24];
+uint8_t daysOFF[7];
 bool stayON=false;
 uint8_t stayONSeconds=0;
 unsigned int loopCounter=10;
 bool isSwitchedOn = false;
 bool wasOn = false;
+bool wasStayON = false;
 
 bool connect_wifi() {
     const char *found_ssid = NULL;
@@ -118,6 +122,11 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     doc.clear();
     DeserializationError error = deserializeJson(doc,buffer);
     if (error) return;
+    if (doc.containsKey("daysOFF")) {
+        JsonArray jsonDaysOFF = doc["daysOFF"].as<JsonArray>();
+        for(uint8_t i=0;i<7;i++) daysOFF[i]=false;
+        for(JsonVariant v : jsonDaysOFF) daysOFF[v.as<uint8_t>()]=true;
+    }
     if (doc.containsKey("hoursOFF")) {
         JsonArray jsonHoursOFF = doc["hoursOFF"].as<JsonArray>();
         for(uint8_t i=0;i<24;i++) hoursOFF[i]=false;
@@ -136,7 +145,7 @@ bool mqtt_connect() {
     mqttClient.setServer(MQTT_SERVER,MQTT_PORT);   
     mqttClient.setCallback(mqtt_callback); 
     if (mqttClient.connect(clientId.c_str(),MQTT_USER,MQTT_PASSWORD))
-        if (mqttClient.subscribe(MQTT_TOPIC"/cmd")) return true;
+        if (mqttClient.subscribe(MQTT_COMMAND_TOPIC)) return true;
     return false;
 }
 
@@ -154,7 +163,7 @@ void mqtt_send(char *topic, const char *key, const char *value, bool isRetained)
 void mqtt_off() {
     if (mqttClient.connected()) {
         mqttClient.disconnect();
-        mqttClient.unsubscribe(MQTT_TOPIC"/cmd");
+        mqttClient.unsubscribe(MQTT_COMMAND_TOPIC);
     }
 }
 
@@ -193,7 +202,7 @@ void switchOnOff(bool isSwitchOn) {
         log_println("Switching Load OFF");
         isSwitchedOn = false;
     }
-    mqtt_send(MQTT_TOPIC"/sta","status",isSwitchOn?"ON":"OFF",false);    
+    mqtt_send(MQTT_STATUS_TOPIC,"status",isSwitchOn?"ON":"OFF",true);    
 }
 
 uint8_t getHourOfDay() {
@@ -205,24 +214,45 @@ uint8_t getHourOfDay() {
     return tm_info->tm_hour;
 }
 
+uint8_t getDayOfWeek() {
+    time_t t;
+    struct tm *tm_info;
+
+    time(&t);
+    tm_info = localtime(&t);
+    return tm_info->tm_wday;    
+}
+
 bool manage_power_switch() {
+    log_printfln("Status is %s",isSwitchedOn?"ON":"OFF");
+    uint8_t h = getHourOfDay();
+    uint8_t d = getDayOfWeek();
+    log_printfln("Hour Of Day: %d -> %s",h,hoursOFF[h]?"OFF":"ON"); //remove
+    log_printfln("Day Of Week: %d -> %s",d,daysOFF[d]?"OFF":"ON"); //remove
     if (stayON) {
         log_printfln("Forcing ON for %u seconds",stayONSeconds);
+        wasOn = isSwitchedOn;
         switchOnOff(true);
         loopCounter = stayONSeconds * (1000 / LOOP_DELAY);
         stayON = false;
+        wasStayON = true;
         return false;
     }
-    uint8_t h = getHourOfDay();
-    log_printfln("Hour Of Day: %d -> %s",h,hoursOFF[h]?"OFF":"ON"); //remove
-    if (hoursOFF[h] && isSwitchedOn) {
-        switchOnOff(false);
-        wasOn = true;
-        return true;
+    if (!wasStayON) {
+        if ((hoursOFF[h] || daysOFF[d]) && isSwitchedOn) {
+            switchOnOff(false);
+            wasOn = true;
+            return true;
+        }
+        if (!(hoursOFF[h] || daysOFF[d]) && wasOn) {
+            switchOnOff(true);
+            wasOn = false;
+        }
     }
-    if (!hoursOFF[h] && wasOn) {
-        switchOnOff(true);
-        wasOn = false;
+    else {
+        switchOnOff(wasOn);
+        wasStayON = false;
+        return true;
     }
     if (voltage<OFF_VOLTAGE) switchOnOff(false);
     if (voltage>ON_VOLTAGE) switchOnOff(true);
@@ -243,6 +273,7 @@ void eeprom_off() {
 }
 
 void deep_sleep() {
+    log_println("DeepSleep");
     delay(1000);
     mqtt_off();
     eeprom_off();
