@@ -40,8 +40,7 @@ def publish_firmware(source, target, env):
     
     scp.close()
     ssh.close()
-
-    os.remove(firmware_path)
+    os.rename(firmware_path,'/tmp/espupdate/espupdate/'+firmware_name)
 
     # url = "/".join([
     #     "https://api.bintray.com", "content",

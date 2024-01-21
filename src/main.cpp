@@ -4,7 +4,7 @@
 #define led_on() digitalWrite(LED_BUILTIN, LOW);
 #define led_off() digitalWrite(LED_BUILTIN, HIGH);
 
-#define SITE_NAME "lab"
+#define SITE_NAME "gmsiziano"
 #define DEVICE_NAME "camera1"
 #define SENSOR_NAME DEVICE_NAME"_battery"
 #define OFF_VOLTAGE 14.4
