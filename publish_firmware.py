@@ -6,9 +6,10 @@ import sys
 from os.path import basename
 try:
     import paramiko
+    import shutil
     from scp import SCPClient
 except ImportError:
-    env.Execute("$PYTHONEXE -m pip install pramiko scp")
+    env.Execute("$PYTHONEXE -m pip install paramiko scp shutil")
 
 # from platformio import util
 # project_config = util.load_project_config()
@@ -40,7 +41,7 @@ def publish_firmware(source, target, env):
     
     scp.close()
     ssh.close()
-    os.rename(firmware_path,'/tmp/espupdate/espupdate/'+firmware_name)
+    shutil.move(firmware_path,'D:/tmp/espupdate/espupdate/'+firmware_name)
 
     # url = "/".join([
     #     "https://api.bintray.com", "content",

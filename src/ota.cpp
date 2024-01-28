@@ -4,8 +4,36 @@
 WiFiClient ota_client;
 
 bool initNetwork() {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(OTA_SSID,OTA_PASS);
+    const char *found_ssid = NULL;
+    int n = 0;
+
+    for (int i = 0; i < 3; i++) {
+        n = WiFi.scanNetworks();
+        if (n > 0) break;
+        delay(250);
+    }
+
+    for (int i = 0; i < n; ++i) {
+        int j = 0;
+        while (OTA_CREDENTIALS[j][0] != NULL) {
+            if (WiFi.SSID(i) == OTA_CREDENTIALS[j][0]) {
+                found_ssid = OTA_CREDENTIALS[j][0];
+                const char *passphrase = OTA_CREDENTIALS[j][1];
+                WiFi.begin(found_ssid, passphrase);
+                break;
+            }
+            j++;
+        }
+    }
+
+    if (found_ssid == NULL) {
+        Serial.println("No known WiFi found.");
+        return false;
+    }
+
+    Serial.print("Connecting to WiFi: ");
+    Serial.println(found_ssid);
+
     int tries = 50;
     while (WiFi.status() != WL_CONNECTED && tries > 0) {
         delay(250);
@@ -15,8 +43,24 @@ bool initNetwork() {
         Serial.println("Failed to connect to WiFi!");
         return false;
     }
+    WiFi.mode(WIFI_STA);
     return true;
 }
+
+// bool initNetwork() {
+//     WiFi.mode(WIFI_STA);
+//     WiFi.begin(OTA_SSID,OTA_PASS);
+//     int tries = 50;
+//     while (WiFi.status() != WL_CONNECTED && tries > 0) {
+//         delay(250);
+//         tries--;
+//     }
+//     if (tries == 0) {
+//         Serial.println("Failed to connect to WiFi!");
+//         return false;
+//     }
+//     return true;
+// }
 
 void initMDns() {
     if (!MDNS.begin(hostString)) {
@@ -26,12 +70,16 @@ void initMDns() {
 }
 
 void checkUpdates() {  
+    String host = "";
+    int port = 0;
+
     Serial.println("Sending mDNS query");
     int n = MDNS.queryService("espupdate", "tcp");
     Serial.println("mDNS query done");
     if (n == 0) {
-      Serial.println("no update services found");
-      return;
+      Serial.println("no update services found, using fallback");
+      host = FALLBACK_UPDATE_SERVER_IP;
+      port = FALLBACK_UPDATE_SERVER_PORT;
     }
     else {
       Serial.print(n);
@@ -47,9 +95,11 @@ void checkUpdates() {
         Serial.print(MDNS.port(i));
         Serial.println(")");
       }
+      host = MDNS.IP(0).toString();
+      port = MDNS.port(0);
     }
     Serial.println();
-    String url = "http://"+MDNS.IP(0).toString()+":"+MDNS.port(0)+"/espupdate?n=" SW_NAME "&v=" SW_VERSION;
+    String url = "http://"+host+":"+port+"/espupdate?n=" SW_NAME "&v=" SW_VERSION;
     Serial.println("Checking firmware update from "+url);
     t_httpUpdate_return ret = ESPhttpUpdate.update(ota_client,url);
     switch (ret) {
