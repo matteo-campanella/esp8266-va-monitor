@@ -136,6 +136,10 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
         stayON = true;
         stayONSeconds = doc["stayON"].as<uint16_t>();
     }
+    if (doc.containsKey("goOFF")) {
+        isSwitchedOn = false;
+        EEPROM.put(1,isSwitchedOn);
+    }
 }
 
 bool mqtt_connect() {
